@@ -77,7 +77,8 @@
         .board-grid-container {
             display: grid;
             width: 100%;
-            max-width: min(96vw, 960px);
+            width: min(96vw, calc(100svh - 230px));
+            max-width: none;
             margin: 0 auto;
             aspect-ratio: 1 / 1;
             box-sizing: border-box;
@@ -251,7 +252,7 @@
             background: rgba(99, 102, 241, 0.8);
         }
     
-        html.light-mode body{background:#eef2ff;color:#172033} html.light-mode .glass-panel{background:rgba(255,255,255,.94);border-color:#cbd5e1;color:#172033} html.light-mode .glass-card{background:#f8fafc;border-color:#cbd5e1} .board-cell{border:1px solid rgba(2,6,23,.55)!important} #boardContainer{width:100%} #boardContainer .board-grid-container{max-width:min(96vw,960px)}
+        html.light-mode body{background:#eef2ff;color:#172033} html.light-mode .glass-panel{background:rgba(255,255,255,.94);border-color:#cbd5e1;color:#172033} html.light-mode .glass-card{background:#f8fafc;border-color:#cbd5e1} .board-cell{border:1px solid rgba(2,6,23,.55)!important} #boardContainer{width:100%} #boardContainer .board-grid-container{width:min(96vw,calc(100svh - 230px));max-width:none}
 </style>
 </head>
 <body class="min-h-screen text-slate-100 flex flex-col antialiased selection:bg-indigo-500 selection:text-white">
@@ -619,7 +620,11 @@
         // Helper: Check if human can make a move right now
         function isHumanTurn() {
             if (gameOver) return false;
-            if (p2pSide && currentTurn !== p2pSide) return false;
+            if (conn && conn.open && p2pSide) {
+                const hostTurn = currentGame === 'shogi' ? 'sente' : currentGame === 'vidro' ? 'red' : 'black';
+                const localTurn = p2pSide === 'black' ? hostTurn : (currentGame === 'chess' ? 'white' : currentGame === 'shogi' ? 'gote' : currentGame === 'vidro' ? 'yellow' : 'white');
+                if (currentTurn !== localTurn) return false;
+            }
             if (playMode === '1p') {
                 const isHumanBlack = (playerSide === 'black');
                 const isBlackTurn = (currentTurn === 'black' || currentTurn === 'sente' || currentTurn === 'red' || currentTurn === 'white'); // chess white starts
@@ -644,8 +649,9 @@
         // UNIFIED CELL CLICK HANDLER
         // ==========================================
         function handleCellClick(r, c) {
-            if (!gameStarted) return;
+            if (!gameStarted) { showToast('先に「対局開始」を押してください'); return; }
             if (!isHumanTurn()) return;
+            if (!Number.isInteger(r) || !Number.isInteger(c) || r < 0 || c < 0 || !Array.isArray(board) || !Array.isArray(board[r]) || c >= board[r].length) return;
 
             switch (currentGame) {
                 case 'othello': handleOthelloClick(r, c); break;
@@ -1542,7 +1548,7 @@
             }
 
             container.innerHTML = html;
-            lucide.createIcons();
+            window.lucide?.createIcons?.();
         }
 
         function getShogiPieceChar(p) {
@@ -1757,6 +1763,20 @@
         function openGuideModal() {
             const modal = document.getElementById('guideModal');
             const body = document.getElementById('guideContentBody');
+            const guides = {
+                othello: ['オセロ', '自分の石で相手の石を縦・横・斜めに挟むと、自分の色に反転します。光るマスから置き場所を選びます。', '盤面が埋まるか、どちらも置けなくなった時に石の数が多い側の勝ちです。角は返されにくいため、確保を狙いましょう。'],
+                chess: ['チェス', '駒を選ぶと移動できるマスが表示されます。キングは1マス、クイーンは縦横斜め、ルークは縦横、ビショップは斜め、ナイトはL字、ポーンは前進します。', '相手キングを逃げられない状態（チェックメイト）にすれば勝ちです。自分のキングが攻撃されていないか毎手確認しましょう。'],
+                shogi: ['将棋', '駒を選び、表示されたマスを選ぶと移動します。相手の駒を取ると持ち駒になり、自分の番に空きマスへ打てます。持ち駒はターン欄に表示されます。', '相手の王を詰ませれば勝ちです。打つ場所によって次の攻め筋が変わるため、王の逃げ道も見ておきましょう。'],
+                vidro: ['ビードロ', '自分の番に空きマスを選んで玉を置きます。盤上の自分の玉を選ぶと弾く操作もできます。色ごとの残り玉数はターン欄に表示されます。', '自分の色を縦・横・斜めのいずれかに3個並べると勝ちです。相手の並びを防ぐ手も考えましょう。'],
+                go: ['囲碁（9路盤）', '交点を選んで黒白交互に石を置きます。石の上下左右にある空点が呼吸点です。呼吸点をすべて塞がれた石は取られます。', '終局後に囲った地の広さで勝敗を競います。石をつなげて守りつつ、相手の石を囲みましょう。'],
+                tictactoe: ['○×ゲーム', '空いている3×3のマスを交互に選びます。置いた印は動かせません。', '縦・横・斜めのどれかに先に3つ並べると勝ちです。相手が2つ並べたら次の手で止めましょう。'],
+                gomoku: ['五目並べ', '15×15の交点に黒白交互に石を置きます。', '縦・横・斜めのいずれかに自分の石を5個連続で並べると勝ちです。自分の連を伸ばしながら相手の四連を防ぎましょう。'],
+                quantum_gomoku: ['量子五目', '1手で空きマスを2つ選び、量子ペアを置きます。ペア同士が輪を作ると観測が起き、石の位置が確定します。', '観測後に自分の石を5個連続で並べると勝ちです。輪ができる場所と確定後の並びを予測しましょう。']
+            };
+            const guide = guides[currentGame] || guides.othello;
+            if (body) body.innerHTML = `<article class="space-y-4"><h4 class="text-base font-black text-indigo-300">${guide[0]} の遊び方</h4><section><b>ルール</b><p>${guide[1]}</p></section><section><b>勝ち方とコツ</b><p>${guide[2]}</p></section></article>`;
+            if (modal) modal.classList.remove('hidden');
+            return;
             if (body) {
                 body.innerHTML = `
                     <div class="space-y-4">
@@ -1878,11 +1898,11 @@
 
         function sendGameState() {
             if (!conn || !conn.open || applyingRemoteState) return;
-            conn.send({ type: 'game-state', state: {
+            try { conn.send({ type: 'game-state', state: {
                 currentGame, playMode, playerSide, currentTurn, gameOver,
                 board, selectedCell, candidateMoves, shogiHand, gameStarted,
                 vidroHands, quantumState
-            }});
+            }}); } catch (error) { showToast('Connection error. Please reconnect.'); }
         }
 
         function applyGameState(state) {
@@ -1944,7 +1964,7 @@
             const start=document.createElement('button'); start.textContent='▶ 対局開始'; start.className='px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-sm'; start.onclick=startGame; document.getElementById('turnText').parentElement.appendChild(start);
             const theme=document.createElement('button'); theme.textContent='☀ ライト'; theme.className='px-3 py-2 rounded-xl bg-slate-700 text-white text-xs font-bold'; theme.onclick=toggleLightMode; document.querySelector('header .max-w-7xl').appendChild(theme);
             switchGame('othello');
-            lucide.createIcons();
+            window.lucide?.createIcons?.();
         };
     </script>
 </body>
