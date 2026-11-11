@@ -416,11 +416,9 @@
                 <!-- CPU Difficulty Selector -->
                 <div id="cpuDifficultyWrapper" class="flex flex-col gap-1.5">
                     <label class="text-[11px] font-bold text-slate-400">CPUの強さ</label>
-                    <div class="grid grid-cols-3 gap-1.5 p-1 bg-slate-950/80 rounded-2xl border border-slate-800">
-                        <button onclick="setCpuDifficulty('easy')" id="diff-easy-btn" class="py-1.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white transition">初級</button>
-                        <button onclick="setCpuDifficulty('medium')" id="diff-medium-btn" class="py-1.5 rounded-xl text-xs font-bold bg-indigo-600 text-white transition shadow">中級</button>
-                        <button onclick="setCpuDifficulty('hard')" id="diff-hard-btn" class="py-1.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white transition">上級</button>
-                    </div>
+                    <label class="text-[11px] font-bold text-slate-400 flex justify-between"><span>CPUの強さ</span><span id="cpuDifficultyValue">5/10・戦術的</span></label>
+                    <input id="cpuDifficultySlider" type="range" min="1" max="10" step="1" value="5" oninput="setCpuDifficulty(this.value)" class="w-full accent-indigo-500 cursor-pointer" aria-label="CPUの強さ 1〜10">
+                    <div class="flex justify-between text-[10px] text-slate-500"><span>1・手加減</span><span>10・極めて強い</span></div>
                 </div>
 
                 <!-- Player Side / Color Pick -->
@@ -578,7 +576,7 @@
         let currentGame = 'othello';
         let playMode = '1p'; // '1p', '2p', '4p'
         let gameStarted = false;
-        let cpuDifficulty = 'medium'; // 'easy', 'medium', 'hard'
+        let cpuDifficulty = 5; // 1 (gentle) to 10 (very hard)
         let playerSide = 'black'; // 'black' (p1), 'white' (p2), etc.
         let currentTurn = 'black'; 
         let gameOver = false;
@@ -1178,17 +1176,11 @@
         }
 
         function setCpuDifficulty(diff) {
-            cpuDifficulty = diff;
-            ['easy', 'medium', 'hard'].forEach(d => {
-                const btn = document.getElementById(`diff-${d}-btn`);
-                if (btn) {
-                    if (d === diff) {
-                        btn.className = 'py-1.5 rounded-xl text-xs font-bold bg-indigo-600 text-white transition shadow';
-                    } else {
-                        btn.className = 'py-1.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white transition';
-                    }
-                }
-            });
+            cpuDifficulty = Math.max(1, Math.min(10, Number(diff) || 1));
+            const slider = document.getElementById('cpuDifficultySlider');
+            const value = document.getElementById('cpuDifficultyValue');
+            if (slider) slider.value = String(cpuDifficulty);
+            if (value) value.textContent = `${cpuDifficulty}/10 · ${cpuDifficulty <= 3 ? 'Warm-up' : cpuDifficulty <= 6 ? 'Tactical' : cpuDifficulty <= 8 ? 'Advanced' : 'Master'}`;
         }
 
         function setPlayerSide(side) {
@@ -1609,86 +1601,192 @@
         // ==========================================
         // CPU AI ENGINE
         // ==========================================
+        function aiRandomness() { return Math.max(3, 91 - cpuDifficulty * 8.8); }
+        function pickScoredMove(scored) {
+            if (!scored.length) return null;
+            scored.sort((a, b) => b.score - a.score);
+            const window = cpuDifficulty <= 2 ? Math.min(5, scored.length) : cpuDifficulty <= 5 ? Math.min(3, scored.length) : cpuDifficulty <= 8 ? Math.min(2, scored.length) : 1;
+            const pool = scored.slice(0, window);
+            return pool.reduce((best, move) => move.score + Math.random() * aiRandomness() > best.score + Math.random() * aiRandomness() ? move : best, pool[0]);
+        }
+
+        function chooseTicTacToeMove() {
+            const cpu = currentTurn === 'black' ? 'O' : 'X';
+            const human = cpu === 'O' ? 'X' : 'O';
+            const maxDepth = cpuDifficulty >= 9 ? 9 : cpuDifficulty >= 6 ? 6 : cpuDifficulty >= 3 ? 4 : 2;
+            const minimax = (depth, turn, alpha, beta) => {
+                if (checkTicTacToeWin(cpu)) return 100 - depth;
+                if (checkTicTacToeWin(human)) return depth - 100;
+                const empty = [];
+                for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) if (board[r][c] === '') empty.push({r,c});
+                if (!empty.length || depth >= maxDepth) return 0;
+                let best = turn === cpu ? -Infinity : Infinity;
+                for (const m of empty) {
+                    board[m.r][m.c] = turn;
+                    const score = minimax(depth + 1, turn === cpu ? human : cpu, alpha, beta);
+                    board[m.r][m.c] = '';
+                    if (turn === cpu) { best = Math.max(best, score); alpha = Math.max(alpha, best); }
+                    else { best = Math.min(best, score); beta = Math.min(beta, best); }
+                    if (beta <= alpha) break;
+                }
+                return best;
+            };
+            const scored = [];
+            for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) if (board[r][c] === '') {
+                board[r][c] = cpu;
+                const score = minimax(1, human, -Infinity, Infinity);
+                board[r][c] = '';
+                scored.push({r,c,score:score * 100 + (r === 1 && c === 1 ? 6 : 0)});
+            }
+            return pickScoredMove(scored);
+        }
+
+        function chooseGomokuMove(size, emptyValue, own, opponent) {
+            const scored = [];
+            const axes = [[1,0],[0,1],[1,1],[1,-1]];
+            const pattern = (r,c,stone) => {
+                let score = 0;
+                for (const [dr,dc] of axes) {
+                    let count = 1, open = 0;
+                    for (const sign of [-1,1]) {
+                        let nr=r+dr*sign,nc=c+dc*sign;
+                        while(nr>=0&&nr<size&&nc>=0&&nc<size&&board[nr][nc]===stone){count++;nr+=dr*sign;nc+=dc*sign;}
+                        if(nr>=0&&nr<size&&nc>=0&&nc<size&&board[nr][nc]===emptyValue) open++;
+                    }
+                    score += count >= 5 ? 100000 : count === 4 ? (open ? 12000 : 500) : count === 3 ? (open === 2 ? 1800 : open ? 350 : 0) : count === 2 ? (open === 2 ? 100 : 20) : 0;
+                }
+                return score;
+            };
+            for(let r=0;r<size;r++) for(let c=0;c<size;c++) if(board[r][c]===emptyValue) {
+                let near=false;
+                for(let dr=-2;dr<=2&&!near;dr++) for(let dc=-2;dc<=2;dc++) if(board[r+dr]?.[c+dc]!==undefined&&board[r+dr][c+dc]!==emptyValue){near=true;break;}
+                if(!near && board.flat().some(v=>v!==emptyValue)) continue;
+                board[r][c]=own; const attack=pattern(r,c,own); board[r][c]=opponent; const defense=pattern(r,c,opponent); board[r][c]=emptyValue;
+                const center=(size-1)/2, centrality=size-Math.abs(r-center)-Math.abs(c-center);
+                scored.push({r,c,score:attack+defense*0.96+centrality*2+Math.random()*aiRandomness()});
+            }
+            return pickScoredMove(scored);
+        }
+
+        function chooseChessMove() {
+            const white = currentTurn === 'white';
+            const values = {p:100,n:320,b:330,r:500,q:900,k:20000};
+            const moves=[];
+            for(let r=0;r<8;r++) for(let c=0;c<8;c++) {
+                const piece=board[r][c];
+                if(!piece || (white?!isWhiteChessPiece(piece):!isBlackChessPiece(piece))) continue;
+                for(const to of getChessCandidateMoves(r,c)) moves.push({from:{r,c},to,piece,captured:board[to.r][to.c]});
+            }
+            const scored=[];
+            for(const move of moves) {
+                const next=board.map(row=>row.slice()); next[move.to.r][move.to.c]=move.piece; next[move.from.r][move.from.c]='';
+                let material=0;
+                for(const row of next) for(const p of row) if(p) material+=(isWhiteChessPiece(p)?1:-1)*values[p.toLowerCase()];
+                const center=7-(Math.abs(move.to.r-3.5)+Math.abs(move.to.c-3.5));
+                const capture=move.captured ? values[move.captured.toLowerCase()] : 0;
+                let danger=0;
+                const previous=board; board=next;
+                const enemyPieces=[];
+                for(let r=0;r<8;r++) for(let c=0;c<8;c++) {const p=board[r][c];if(p&& (white?isBlackChessPiece(p):isWhiteChessPiece(p))) enemyPieces.push({r,c,p});}
+                for(const e of enemyPieces) for(const d of getChessCandidateMoves(e.r,e.c)) if(board[d.r][d.c]&& (white?isWhiteChessPiece(board[d.r][d.c]):isBlackChessPiece(board[d.r][d.c]))) danger=Math.max(danger,values[board[d.r][d.c].toLowerCase()]);
+                board=previous;
+                const positional=(move.piece.toLowerCase()==='p'?(white?6-move.to.r:move.to.r-1)*7:0)+center*(move.piece.toLowerCase()==='n'||move.piece.toLowerCase()==='b'?9:3);
+                const perspective=white?1:-1;
+                scored.push({...move,score:perspective*material+capture*0.45+positional-danger*(0.45+cpuDifficulty*0.045)+Math.random()*aiRandomness()});
+            }
+            return pickScoredMove(scored);
+        }
+
+        function chooseVidroMove() {
+            const me={red:1,yellow:2,blue:3,green:4}[currentTurn];
+            const next={red:'yellow',yellow:'red',blue:'green',green:'blue'}[currentTurn];
+            const them={red:1,yellow:2,blue:3,green:4}[next];
+            if (!me || !vidroHands[currentTurn]) return null;
+            const dirs=[[1,0],[0,1],[1,1],[1,-1]], scored=[];
+            for(let r=0;r<7;r++) for(let c=0;c<7;c++) if(board[r][c]===0&&!isAdjacentToOwnVidroPiece(r,c,me)) {
+                let attack=0, defense=0;
+                for(const [dr,dc] of dirs) for(let offset=0;offset<3;offset++) {
+                    const cells=[];
+                    for(let k=0;k<3;k++){const rr=r+dr*(k-offset),cc=c+dc*(k-offset);if(rr>=0&&rr<7&&cc>=0&&cc<7)cells.push(board[rr][cc]);}
+                    if(cells.length!==3) continue;
+                    const own=cells.filter(v=>v===me).length, enemy=cells.filter(v=>v===them).length;
+                    if(!enemy) attack=Math.max(attack,own===2?12000:own*220);
+                    if(!own) defense=Math.max(defense,enemy===2?8500:enemy*160);
+                }
+                scored.push({r,c,score:attack+defense+(6-Math.abs(r-3)-Math.abs(c-3))*12+Math.random()*aiRandomness()});
+            }
+            return pickScoredMove(scored);
+        }
+
+        function chooseQuantumPairMove() {
+            const own=currentTurn==='black'?'B':'W', enemy=own==='B'?'W':'B';
+            const scored=[];
+            for(let r=0;r<9;r++) for(let c=0;c<9;c++) if(board[r][c]==='') {
+                let ownNear=0, enemyNear=0, occupied=0;
+                for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++) if(dr||dc) {
+                    const v=board[r+dr]?.[c+dc]; if(v){occupied++;if(String(v).startsWith(own))ownNear++;else if(String(v).startsWith(enemy))enemyNear++;}
+                }
+                scored.push({r,c,score:ownNear*38+enemyNear*19+occupied*4+(8-Math.abs(r-4)-Math.abs(c-4))*3+Math.random()*aiRandomness()});
+            }
+            return pickScoredMove(scored);
+        }
+
         function checkCpuTurn() {
             if (!gameStarted || playMode !== '1p' || isHumanTurn() || gameOver) return;
-
+            const scheduledGame=currentGame, scheduledTurn=currentTurn;
             setTimeout(() => {
-                if (gameOver) return;
+                if (!gameStarted || playMode !== '1p' || gameOver || currentGame!==scheduledGame || currentTurn!==scheduledTurn || isHumanTurn()) return;
 
                 if (currentGame === 'othello') {
                     if (candidateMoves.length > 0) {
-                        const move = candidateMoves[Math.floor(Math.random() * candidateMoves.length)];
+                        const weights = [[120,-25,20,5,5,20,-25,120],[-25,-45,-5,-5,-5,-5,-45,-25],[20,-5,15,3,3,15,-5,20],[5,-5,3,3,3,3,-5,5],[5,-5,3,3,3,3,-5,5],[20,-5,15,3,3,15,-5,20],[-25,-45,-5,-5,-5,-5,-45,-25],[120,-25,20,5,5,20,-25,120]];
+                        const move = pickScoredMove(candidateMoves.map(m=>({ ...m, score: weights[m.r][m.c]+m.flips.length*(board.flat().filter(Boolean).length<20?1.4:0.35)+Math.random()*aiRandomness() })));
                         handleOthelloClick(move.r, move.c);
                     }
                 } else if (currentGame === 'tictactoe') {
-                    const empty = [];
-                    for (let r = 0; r < 3; r++) {
-                        for (let c = 0; c < 3; c++) {
-                            if (board[r][c] === '') empty.push({ r, c });
-                        }
-                    }
-                    if (empty.length > 0) {
-                        const m = empty[Math.floor(Math.random() * empty.length)];
+                    const m = chooseTicTacToeMove();
+                    if (m) {
                         handleTicTacToeClick(m.r, m.c);
                     }
                 } else if (currentGame === 'gomoku') {
-                    const empty = [];
-                    for (let r = 0; r < 15; r++) {
-                        for (let c = 0; c < 15; c++) {
-                            if (board[r][c] === 0) empty.push({ r, c });
-                        }
-                    }
-                    if (empty.length > 0) {
-                        const m = empty[Math.floor(Math.random() * empty.length)];
+                    const m = chooseGomokuMove(15,0,currentTurn==='black'?1:2,currentTurn==='black'?2:1);
+                    if (m) {
                         handleGomokuClick(m.r, m.c);
                     }
                 } else if (currentGame === 'chess') {
-                    const cpuPieces = [];
-                    const isCpuWhite = (currentTurn === 'white');
-                    for (let r = 0; r < 8; r++) {
-                        for (let c = 0; c < 8; c++) {
-                            const p = board[r][c];
-                            if (p && ((isCpuWhite && isWhiteChessPiece(p)) || (!isCpuWhite && isBlackChessPiece(p)))) {
-                                const moves = getChessCandidateMoves(r, c);
-                                if (moves.length > 0) cpuPieces.push({ r, c, moves });
-                            }
-                        }
-                    }
-                    if (cpuPieces.length > 0) {
-                        const choice = cpuPieces[Math.floor(Math.random() * cpuPieces.length)];
-                        selectedCell = { r: choice.r, c: choice.c };
-                        candidateMoves = choice.moves;
-                        const dest = choice.moves[Math.floor(Math.random() * choice.moves.length)];
-                        handleChessClick(dest.r, dest.c);
+                    const move = chooseChessMove();
+                    if (move) {
+                        selectedCell = move.from;
+                        candidateMoves = getChessCandidateMoves(move.from.r,move.from.c);
+                        handleChessClick(move.to.r,move.to.c);
                     }
                 } else if (currentGame === 'shogi') {
-                    const cpuPieces = [];
                     const isCpuSente = (currentTurn === 'sente');
+                    const scored = [];
+                    const shogiValues = {k:20000,g:650,s:500,n:400,l:350,r:900,b:850,p:120};
                     for (let r = 0; r < 9; r++) {
                         for (let c = 0; c < 9; c++) {
                             const p = board[r][c];
                             if (p && ((isCpuSente && p.endsWith('1')) || (!isCpuSente && p.endsWith('2')))) {
                                 const moves = getShogiCandidateMoves(r, c);
-                                if (moves.length > 0) cpuPieces.push({ r, c, moves });
+                                for (const to of moves) {
+                                    const target=board[to.r][to.c];
+                                    const capture=target ? (shogiValues[target[0].toLowerCase()]||100) : 0;
+                                    const advance=isCpuSente ? r-to.r : to.r-r;
+                                    scored.push({from:{r,c},to,score:capture*1.2+advance*9+Math.random()*aiRandomness()});
+                                }
                             }
                         }
                     }
-                    if (cpuPieces.length > 0) {
-                        const choice = cpuPieces[Math.floor(Math.random() * cpuPieces.length)];
-                        selectedCell = { r: choice.r, c: choice.c };
-                        candidateMoves = choice.moves;
-                        const dest = choice.moves[Math.floor(Math.random() * choice.moves.length)];
-                        handleShogiClick(dest.r, dest.c);
+                    const move=pickScoredMove(scored);
+                    if (move) {
+                        selectedCell=move.from;
+                        candidateMoves=getShogiCandidateMoves(move.from.r,move.from.c);
+                        handleShogiClick(move.to.r,move.to.c);
                     }
                 } else if (currentGame === 'vidro') {
-                    const empty = [];
-                    for (let r = 0; r < 7; r++) {
-                        for (let c = 0; c < 7; c++) {
-                            if (board[r][c] === 0) empty.push({ r, c });
-                        }
-                    }
-                    if (empty.length > 0) {
-                        const m = empty[Math.floor(Math.random() * empty.length)];
+                    const m = chooseVidroMove();
+                    if (m) {
                         handleVidroClick(m.r, m.c);
                     }
                 } else if (currentGame === 'go') {
@@ -1699,21 +1797,19 @@
                         }
                     }
                     if (empty.length > 0) {
-                        const m = empty[Math.floor(Math.random() * empty.length)];
+                        const m = pickScoredMove(empty.map(({r,c})=>{
+                            let friendly=0,enemy=0,near=0;
+                            for(const [dr,dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {const v=board[r+dr]?.[c+dc];if(v===1) friendly++;else if(v===2) enemy++;if(v) near++;}
+                            return {r,c,score:friendly*24+enemy*9+near*7+(9-Math.abs(r-4)-Math.abs(c-4))*2+Math.random()*aiRandomness()};
+                        }));
                         handleGoClick(m.r, m.c);
                     }
                 } else if (currentGame === 'quantum_gomoku') {
-                    const empty = [];
-                    for (let r = 0; r < 9; r++) {
-                        for (let c = 0; c < 9; c++) {
-                            if (board[r][c] === '') empty.push({ r, c });
-                        }
-                    }
-                    if (empty.length >= 2) {
-                        const m1 = empty.splice(Math.floor(Math.random() * empty.length), 1)[0];
-                        const m2 = empty.splice(Math.floor(Math.random() * empty.length), 1)[0];
+                    const m1=chooseQuantumPairMove();
+                    if (m1) {
                         handleQuantumClick(m1.r, m1.c);
-                        handleQuantumClick(m2.r, m2.c);
+                        const m2=chooseQuantumPairMove();
+                        if(m2) handleQuantumClick(m2.r,m2.c);
                     }
                 }
             }, 400);
