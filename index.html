@@ -621,16 +621,15 @@
         function isHumanTurn() {
             if (gameOver) return false;
             if (conn && conn.open && p2pSide) {
-                const hostTurn = currentGame === 'shogi' ? 'sente' : currentGame === 'vidro' ? 'red' : 'black';
-                const localTurn = p2pSide === 'black' ? hostTurn : (currentGame === 'chess' ? 'white' : currentGame === 'shogi' ? 'gote' : currentGame === 'vidro' ? 'yellow' : 'white');
+                const hostTurn = currentGame === 'chess' ? 'white' : currentGame === 'shogi' ? 'sente' : currentGame === 'vidro' ? 'red' : 'black';
+                const localTurn = p2pSide === 'black' ? hostTurn : (currentGame === 'chess' ? 'black' : currentGame === 'shogi' ? 'gote' : currentGame === 'vidro' ? 'yellow' : 'white');
                 if (currentTurn !== localTurn) return false;
             }
             if (playMode === '1p') {
                 const isHumanBlack = (playerSide === 'black');
-                const isBlackTurn = (currentTurn === 'black' || currentTurn === 'sente' || currentTurn === 'red' || currentTurn === 'white'); // chess white starts
                 if (currentGame === 'chess') {
-                    if (isHumanBlack && currentTurn !== 'black') return false;
-                    if (!isHumanBlack && currentTurn !== 'white') return false;
+                    const humanChessTurn = isHumanBlack ? 'black' : 'white';
+                    if (currentTurn !== humanChessTurn) return false;
                 } else if (currentGame === 'shogi') {
                     if (isHumanBlack && currentTurn !== 'sente') return false;
                     if (!isHumanBlack && currentTurn !== 'gote') return false;
@@ -1149,6 +1148,7 @@
         function switchGame(gameKey) {
             gameStarted = false;
             currentGame = gameKey;
+            if (gameKey === 'chess' && playMode === '1p') setPlayerSide('white');
             document.querySelectorAll('.game-select-btn').forEach(btn => btn.classList.remove('game-active'));
             const activeBtn = document.getElementById(`btn-${gameKey}`);
             if (activeBtn) activeBtn.classList.add('game-active');
@@ -1957,7 +1957,14 @@
             logBox.scrollTop = logBox.scrollHeight;
         }
 
-        function startGame(){ gameStarted=true; updateTurnDisplay(); sendGameState(); showToast('対局を開始しました'); }
+        function startGame(){
+            if (gameOver) resetCurrentGame(false);
+            if (currentGame === 'chess') { currentTurn = 'white'; selectedCell = null; candidateMoves = []; renderBoard(); }
+            gameStarted = true;
+            updateTurnDisplay();
+            sendGameState();
+            showToast('対局を開始しました');
+        }
         function toggleLightMode(){ document.documentElement.classList.toggle('light-mode'); localStorage.setItem('bpg-light-mode',document.documentElement.classList.contains('light-mode')?'1':'0'); }
         window.onload = function() {
             if(localStorage.getItem('bpg-light-mode')==='1') document.documentElement.classList.add('light-mode');
