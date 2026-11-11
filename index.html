@@ -576,6 +576,7 @@
         let currentGame = 'othello';
         let playMode = '1p'; // '1p', '2p', '4p'
         let gameStarted = false;
+        let gamePaused = false;
         let cpuDifficulty = 5; // 1 (gentle) to 10 (very hard)
         let playerSide = 'black'; // 'black' (p1), 'white' (p2), etc.
         let currentTurn = 'black'; 
@@ -617,6 +618,7 @@
 
         // Helper: Check if human can make a move right now
         function isHumanTurn() {
+            if (gamePaused) return false;
             if (gameOver) return false;
             if (conn && conn.open && p2pSide) {
                 const hostTurn = currentGame === 'chess' ? 'white' : currentGame === 'shogi' ? 'sente' : currentGame === 'vidro' ? 'red' : 'black';
@@ -647,6 +649,7 @@
         // ==========================================
         function handleCellClick(r, c) {
             if (!gameStarted) { showToast('先に「対局開始」を押してください'); return; }
+            if (gamePaused) { showToast('対局は一時停止中です'); return; }
             if (!isHumanTurn()) return;
             if (!Number.isInteger(r) || !Number.isInteger(c) || r < 0 || c < 0 || !Array.isArray(board) || !Array.isArray(board[r]) || c >= board[r].length) return;
 
@@ -662,6 +665,29 @@
             }
             // A move is represented by the complete state so every game type stays in sync.
             if (!applyingRemoteState) setTimeout(sendGameState, 0);
+        }
+
+        let pendingPieceAnimation = null;
+        function queuePieceAnimation(from, to) {
+            const source = document.querySelector(`[data-cell="${from.r}-${from.c}"]`);
+            const piece = source?.firstElementChild;
+            const rect = piece?.getBoundingClientRect();
+            if (rect) pendingPieceAnimation = { to, rect };
+        }
+        function playPendingPieceAnimation(container) {
+            const animation = pendingPieceAnimation;
+            pendingPieceAnimation = null;
+            if (!animation || !container || typeof Element === 'undefined' || !Element.prototype.animate) return;
+            const target = container.querySelector(`[data-cell="${animation.to.r}-${animation.to.c}"]`)?.firstElementChild;
+            const end = target?.getBoundingClientRect();
+            if (!target || !end) return;
+            const dx = animation.rect.left - end.left, dy = animation.rect.top - end.top;
+            const flight=target.animate([
+                { transform: `translate(${dx}px, ${dy}px) scale(.86)`, offset: 0 },
+                { transform: `translate(${dx * .45}px, ${dy * .45 - 16}px) scale(1.08)`, offset: .58 },
+                { transform: 'translate(0, 0) scale(1)', offset: 1 }
+            ], { duration: 420, easing: 'cubic-bezier(.2,.8,.25,1)', fill: 'both' });
+            flight.onfinish=()=>flight.cancel();
         }
 
         function handleOthelloClick(r, c) {
@@ -805,6 +831,7 @@
 
             // Move piece if candidate cell clicked
             if (selectedCell && candidateMoves.some(m => m.r === r && m.c === c)) {
+                queuePieceAnimation(selectedCell, { r, c });
                 const fromP = board[selectedCell.r][selectedCell.c];
                 const destP = board[r][c];
                 board[r][c] = fromP;
@@ -940,6 +967,7 @@
 
             // Move piece if candidate clicked
             if (selectedCell && candidateMoves.some(m => m.r === r && m.c === c)) {
+                queuePieceAnimation(selectedCell, { r, c });
                 const fromP = board[selectedCell.r][selectedCell.c];
                 const capturedP = board[r][c];
 
@@ -1111,6 +1139,8 @@
 
         function resetCurrentGame(manual = true) {
             gameStarted = false;
+            gamePaused = false;
+            updatePauseButton();
             gameOver = false;
             selectedCell = null;
             candidateMoves = [];
@@ -1252,7 +1282,10 @@
             }
 
             if (roleEl) {
-                if (!gameStarted) {
+                if (gamePaused) {
+                    roleEl.innerText = '一時停止中';
+                    roleEl.className = 'text-[11px] font-bold text-amber-400';
+                } else if (!gameStarted) {
                     roleEl.innerText = '開始待ち';
                     roleEl.className = 'text-[11px] font-bold text-slate-400';
                 } else if (isHumanTurn()) {
@@ -1510,7 +1543,7 @@
                         cellBg += ' ring-2 ring-indigo-400 bg-indigo-500/30';
                     }
 
-                    html += `<div onclick="handleCellClick(${r}, ${c})" class="board-cell ${cellBg} cursor-pointer transition relative">`;
+                    html += `<div data-cell="${r}-${c}" onclick="handleCellClick(${r}, ${c})" class="board-cell ${cellBg} cursor-pointer transition relative">`;
 
                     // Render Piece Content
                     html += renderCellContent(r, c);
@@ -1540,6 +1573,7 @@
             }
 
             container.innerHTML = html;
+            playPendingPieceAnimation(container);
             window.lucide?.createIcons?.();
         }
 
@@ -1732,10 +1766,10 @@
         }
 
         function checkCpuTurn() {
-            if (!gameStarted || playMode !== '1p' || isHumanTurn() || gameOver) return;
+            if (!gameStarted || gamePaused || playMode !== '1p' || isHumanTurn() || gameOver) return;
             const scheduledGame=currentGame, scheduledTurn=currentTurn;
             setTimeout(() => {
-                if (!gameStarted || playMode !== '1p' || gameOver || currentGame!==scheduledGame || currentTurn!==scheduledTurn || isHumanTurn()) return;
+                if (!gameStarted || gamePaused || playMode !== '1p' || gameOver || currentGame!==scheduledGame || currentTurn!==scheduledTurn || isHumanTurn()) return;
 
                 if (currentGame === 'othello') {
                     if (candidateMoves.length > 0) {
@@ -1996,7 +2030,7 @@
             if (!conn || !conn.open || applyingRemoteState) return;
             try { conn.send({ type: 'game-state', state: {
                 currentGame, playMode, playerSide, currentTurn, gameOver,
-                board, selectedCell, candidateMoves, shogiHand, gameStarted,
+                board, selectedCell, candidateMoves, shogiHand, gameStarted, gamePaused,
                 vidroHands, quantumState
             }}); } catch (error) { showToast('Connection error. Please reconnect.'); }
         }
@@ -2010,6 +2044,8 @@
                 currentTurn = state.currentTurn;
                 gameOver = !!state.gameOver;
                 gameStarted = !!state.gameStarted;
+                gamePaused = !!state.gamePaused;
+                updatePauseButton();
                 board = state.board;
                 selectedCell = state.selectedCell || null;
                 candidateMoves = state.candidateMoves || [];
@@ -2057,14 +2093,34 @@
             if (gameOver) resetCurrentGame(false);
             if (currentGame === 'chess') { currentTurn = 'white'; selectedCell = null; candidateMoves = []; renderBoard(); }
             gameStarted = true;
+            gamePaused = false;
+            updatePauseButton();
             updateTurnDisplay();
             sendGameState();
             showToast('対局を開始しました');
+        }
+        function updatePauseButton(){
+            const button=document.getElementById('pauseGameButton');
+            if(!button)return;
+            button.disabled=!gameStarted;
+            button.textContent=gamePaused?'▶ 再開':'⏸ 一時停止';
+            button.setAttribute('aria-pressed',String(gamePaused));
+            button.classList.toggle('opacity-50',!gameStarted);
+        }
+        function toggleGamePause(){
+            if(!gameStarted)return;
+            gamePaused=!gamePaused;
+            updatePauseButton();
+            updateTurnDisplay();
+            sendGameState();
+            showToast(gamePaused?'対局を一時停止しました':'対局を再開しました');
+            if(!gamePaused)checkCpuTurn();
         }
         function toggleLightMode(){ document.documentElement.classList.toggle('light-mode'); localStorage.setItem('bpg-light-mode',document.documentElement.classList.contains('light-mode')?'1':'0'); }
         window.onload = function() {
             if(localStorage.getItem('bpg-light-mode')==='1') document.documentElement.classList.add('light-mode');
             const start=document.createElement('button'); start.textContent='▶ 対局開始'; start.className='px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-sm'; start.onclick=startGame; document.getElementById('turnText').parentElement.appendChild(start);
+            const pause=document.createElement('button'); pause.id='pauseGameButton'; pause.textContent='⏸ 一時停止'; pause.disabled=true; pause.className='px-3 py-2 rounded-xl bg-amber-600 text-white font-bold text-xs disabled:opacity-50'; pause.onclick=toggleGamePause; document.getElementById('turnText').parentElement.appendChild(pause);
             const theme=document.createElement('button'); theme.textContent='☀ ライト'; theme.className='px-3 py-2 rounded-xl bg-slate-700 text-white text-xs font-bold'; theme.onclick=toggleLightMode; document.querySelector('header .max-w-7xl').appendChild(theme);
             switchGame('othello');
             window.lucide?.createIcons?.();
